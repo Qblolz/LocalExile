@@ -187,6 +187,7 @@ public class GameDataTests
         Assert.Equal(1, SystemSettings.Seeds["experience_multiplier"]);
         Assert.Equal(100, SystemSettings.Seeds["max_level"]);
         Assert.Equal(15, SystemSettings.Seeds["gold_auto_loot_radius"]);
+        Assert.Equal(150, SystemSettings.Seeds["projectile_maximum_range_cells"]);
         Assert.Equal(50, SystemSettings.Seeds["tattoo_total_limit"]);
         Assert.Equal(60, SystemSettings.Seeds["grace_period_seconds"]);
         Assert.Equal(3, SystemSettings.Seeds["rare_max_prefixes"]);
@@ -198,7 +199,7 @@ public class GameDataTests
         Assert.Equal(10, SystemSettings.Seeds["delve_reward_quantity_per_depth_pct"]);
         Assert.Equal(5, SystemSettings.Seeds["delve_reward_rarity_per_depth_pct"]);
         Assert.Equal(250, SystemSettings.Seeds["delve_reward_item_cap"]);
-        Assert.Equal(50, SystemSettings.Seeds.Count);
+        Assert.Equal(51, SystemSettings.Seeds.Count);
     }
 
     [Fact]
@@ -271,6 +272,9 @@ public class GameDataTests
         Assert.True(SystemSettings.Validate("socket_max_wand", 6, out _));
         Assert.False(SystemSettings.Validate("passive_points_per_level", 0, out _));
         Assert.False(SystemSettings.Validate("passive_points_per_level", 101, out _));
+        Assert.True(SystemSettings.Validate("projectile_maximum_range_cells", 150, out _));
+        Assert.False(SystemSettings.Validate("projectile_maximum_range_cells", 0, out _));
+        Assert.False(SystemSettings.Validate("projectile_maximum_range_cells", 150.5, out _));
         Assert.False(SystemSettings.Validate("gold_drop_multiplier", -1, out _));
         Assert.False(SystemSettings.Validate("drop_multiplier_currency", -1, out _));
         Assert.False(SystemSettings.Validate("experience_multiplier", -1, out _));
