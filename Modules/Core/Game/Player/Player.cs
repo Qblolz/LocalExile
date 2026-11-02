@@ -128,6 +128,7 @@ static partial class Game
             conn.Auras.Clear();
             conn.PetrifiedBlood.Clear();
             conn.Lifetap.Clear();
+            conn.LeechDisplay.Clear();
             conn.AuraStatsDirty = ended.Count > 0 || petrifiedEnded || conn.AuraStatsDirty;
             conn.Pools = PoolsFor(conn, conn.Pools.Level);
             conn.ApplyMovementSpeed();
@@ -515,6 +516,8 @@ static partial class Game
             if (conn.FlaskGrounds.StartTickerIfConfigured()) _ = RunFlaskGrounds(remote, stream, ciphers, conn);
             await SendAttackerSlows(remote, stream, ciphers, conn);
             await SendLifetap(remote, stream, ciphers, conn);
+            await SendLeechBuffs(remote, stream, ciphers, conn);
+            await SendPetrifiedBloodLoss(remote, stream, ciphers, conn);
             await TickPassiveAuras(remote, stream, ciphers, conn);
             await PushOutOfCollision(remote, stream, ciphers, conn);
             await BurnIgnited(remote, stream, ciphers, conn);
@@ -679,7 +682,8 @@ static partial class Game
                     double enduringCryLife = conn.EnduringCryRecovery.Take(now);
                     if (convertLifeRegen) conn.EnergyShield.Gain(enduringCryLife);
                     double recoupLife = conn.LifeRecoup.Take(now);
-                    // Flask recovery alone may pass Low Life under Petrified Blood; every other source stops at half.
+                    // Flask recovery alone may pass Low Life under Petrified Blood. Every other source, leech included,
+                    // stops at the boundary; leech instances stay alive, but their recovery above Low Life is ignored.
                     double nonFlaskLife = (zealotsOath ? 0 : lifeRate * seconds) + (zealotsOath ? 0 : fortificationLife)
                         + leeched.Life + (zealotsOath ? 0 : antiquarianLife) + (zealotsOath ? 0 : enduringCryLife) + recoupLife;
                     uint afterNonFlask = PetrifiedBlood.RecoverLife(conn, lifeBefore, nonFlaskLife, ref lifeCarry, minimum: 1);
@@ -1121,6 +1125,10 @@ static partial class Game
                         conn.PresentedAuras.Clear();
                         conn.Lifetap.PresentedBuff = 0;
                         conn.Lifetap.RefreshPresented = false;
+                        conn.LeechDisplay.Clear();
+                        conn.PetrifiedBlood.PresentedLossBuff = 0;
+                        conn.PetrifiedBlood.SentLossPerMinute = 0;
+                        conn.PetrifiedBlood.SentLossExpiry = 0;
                         conn.AuraStatsDirty = false;
                         conn.PlayerObjectCreated = true;
                         return InstanceEntities.CreateObject(PlayerId, conn.PeerType, player.Blob());
