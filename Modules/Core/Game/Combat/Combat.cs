@@ -541,18 +541,21 @@ static partial class Game
         if (gem.Name is not null && SupportedReservation(conn, skillId) is { } reservation)
         {
             if (!Current()) return false;
+            if (SkillsFor(conn).EffectId(gem.Effect) == PetrifiedBlood.EffectId)
+                return await TogglePetrifiedBlood(remote, stream, ciphers, conn, skillId, gem.Effect, gem.Name, reservation,
+                    SupportedSkill(conn, skillId).Level, SupportedSkill(conn, skillId).Quality);
             return await ToggleAura(remote, stream, ciphers, conn, skillId, gem.Effect, gem.Name, reservation,
                 SupportedSkill(conn, skillId).Level, SupportedSkill(conn, skillId).Quality);
         }
         SkillCriticalRoll? criticalRoll = vaalUse?.CriticalRoll;
         if (gem.Name is not null && !vaalCast)
         {
-            uint cost;
+            uint cost, lifeCost;
             bool paid;
             lock (conn.Monsters)
             {
                 if (!Current()) return false;
-                paid = PayMana(conn, skillId, out cost);
+                paid = PayMana(conn, skillId, out cost, out lifeCost);
                 if (paid) criticalRoll = CaptureSkillCriticalRoll(conn, skillId);
                 if (paid && Supports.Of(gem.Effect)?.Types.Contains(47) == true)
                 {
@@ -566,15 +569,16 @@ static partial class Game
             }
             if (!paid)
             {
-                Console.WriteLine($"[gateway] {remote} skill 0x{skillId:x4} {gem.Name}: not enough mana ({conn.PlayerMana} < {cost})");
+                Console.WriteLine($"[gateway] {remote} skill 0x{skillId:x4} {gem.Name}: not enough mana or life " +
+                    $"({conn.PlayerMana} < {cost}, {conn.PlayerLife} life for {lifeCost})");
                 return false;
             }
-            if (cost > 0)
+            if (cost > 0 || lifeCost > 0)
             {
                 if (UsesProjectileRuntime(gem.Effect)) ProjectilesFor(remote, stream, ciphers, conn)
-                    .Enqueue(() => SendPlayerMana(remote, stream, ciphers, conn, $"projectile mana paid: {gem.Name}"));
-                else await SendPlayerMana(remote, stream, ciphers, conn,
-                    $"0x01b1 player mana {conn.PlayerMana} (-{cost} for {gem.Name}) (t={conn.Clock.Elapsed.TotalSeconds:0.000})");
+                    .Enqueue(() => SendSkillCost(remote, stream, ciphers, conn, lifeCost, $"projectile cost paid: {gem.Name}"));
+                else await SendSkillCost(remote, stream, ciphers, conn, lifeCost,
+                    $"0x01b1 player cost {conn.PlayerMana} mana, {conn.PlayerLife} life (-{cost} mana, -{lifeCost} life for {gem.Name}) (t={conn.Clock.Elapsed.TotalSeconds:0.000})");
             }
         }
         if (vaalCast)
@@ -746,7 +750,7 @@ static partial class Game
                 var aura = new AuraCatalog.Aura(skillId, effect, effectId, name, conn.NextBuff++,
                     AuraCatalog.BuffRow(effectId), reservation.Flat, reservation.Percent, level, quality, SourceBuff: conn.NextBuff++);
                 conn.Auras[skillId] = aura;
-                int reserved = AuraCatalog.RequiredMana(conn.Pools, conn.Auras.Values);
+                int reserved = RequiredManaWithPetrifiedBlood(conn, conn.PetrifiedBlood.ManaPercent);
                 if (reserved > conn.Pools.Mana)
                 {
                     conn.Auras.Remove(skillId);
@@ -820,7 +824,7 @@ static partial class Game
                 await WhilePaused(conn);
                 if (!Running()) return;
                 double now = conn.Clock.Elapsed.TotalSeconds;
-                uint cost;
+                uint cost, lifeCost;
                 using (conn.Performance.Lock(conn.Monsters, "channel"))
                 {
                     if (!Running() || conn.Paused || now < conn.NextChannelHitAt) continue;
@@ -835,10 +839,11 @@ static partial class Game
                     conn.Performance.RecordMilliseconds(LatencyPhase.ChannelLate, (now - conn.NextChannelHitAt) * 1000);
                     conn.NextChannelHitAt = Math.Max(conn.NextChannelHitAt, now - 0.05) + SupportedChannelSeconds(conn, skillId);
                     // Payment and admission share the channel's generation check.
-                    if (!PayMana(conn, skillId, out cost)) { conn.ChannelSkill = 0; conn.ChannelGeneration++; }
+                    if (!PayMana(conn, skillId, out cost, out lifeCost)) { conn.ChannelSkill = 0; conn.ChannelGeneration++; }
                 }
                 if (!Running()) { await SendPlayerMana(remote, stream, ciphers, conn, "channel stopped"); return; }
-                if (cost > 0) await SendPlayerMana(remote, stream, ciphers, conn, $"channel cost {cost}");
+                if (cost > 0 || lifeCost > 0)
+                    await SendSkillCost(remote, stream, ciphers, conn, lifeCost, $"channel cost {cost} mana, {lifeCost} life");
                 if (!Running()) return;
                 var at = conn.Walk.Position(conn.Clock.Elapsed.TotalSeconds);
                 await AreaSkillHit(remote, stream, ciphers, conn, skillId, gem, at, at,

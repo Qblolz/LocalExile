@@ -453,6 +453,8 @@ sealed partial class ClientState(AreaLayout layout, uint ticket, uint seed)
     public readonly WardState Ward = new();
     public readonly AntiquarianCombatState Antiquarian = new();
     public readonly TimedLifeRecovery EnduringCryRecovery = new();
+    /// <summary>Petrified Blood's buff, reservation, deferred hit loss and life-cost rules (Combat/PetrifiedBlood.cs).</summary>
+    public readonly PetrifiedBloodState PetrifiedBlood = new();
     // Life Recoup of the hits the player took (Game.RecoupHitLocked), paid by the resource recovery loop.
     public readonly RecoupRecovery LifeRecoup = new();
     public double SentEnduringCryUntil = double.NaN;
