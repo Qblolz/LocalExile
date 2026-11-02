@@ -135,6 +135,7 @@ static partial class Game
                     ? (petrified.SkillId, hash) : null));
             petrified.PresentedBuff = petrified.Buff;
         }
+        if (Lifetap.Presentation(conn) is { } lifetap) packets.Add(lifetap);
         packets.Add(snapshot());
         return [.. packets.SelectMany(p => p)];
     }

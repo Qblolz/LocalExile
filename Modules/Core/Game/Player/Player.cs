@@ -127,6 +127,7 @@ static partial class Game
             petrifiedEnded = conn.PetrifiedBlood.Active || conn.PetrifiedBlood.PresentedBuff != 0;
             conn.Auras.Clear();
             conn.PetrifiedBlood.Clear();
+            conn.Lifetap.Clear();
             conn.AuraStatsDirty = ended.Count > 0 || petrifiedEnded || conn.AuraStatsDirty;
             conn.Pools = PoolsFor(conn, conn.Pools.Level);
             conn.ApplyMovementSpeed();
@@ -219,8 +220,8 @@ static partial class Game
         await SendPlayerEnergyShield(remote, stream, ciphers, conn);
     }
 
-    // A paid skill's life cost, then its mana update. Petrified Blood's life cost changes the life pool at once and
-    // the client must see it before its own prediction does anything with the new value.
+    // A paid skill's life cost, then its mana update. Petrified Blood's and Lifetap's life costs change the life pool
+    // at once and the client must see it before its own prediction does anything with the new value.
     internal static async Task SendSkillCost(string remote, NetworkStream stream, ConnectionCiphers ciphers,
         ClientState conn, uint lifeCost, string? log)
     {
@@ -231,6 +232,19 @@ static partial class Game
             });
         await SendPlayerMana(remote, stream, ciphers, conn, log);
     }
+
+    // The Lifetap buff's client instance: it is added by the mana publication after a supported skill's cost (the
+    // same send gate as the other own buffs) and is removed here when its countdown runs out.
+    internal static Task SendLifetap(string remote, NetworkStream stream, ConnectionCiphers ciphers, ClientState conn) =>
+        Send(remote, stream, ciphers, [], null, atGate: () =>
+        {
+            lock (conn.Monsters)
+            {
+                if (conn.Closed || conn.LeavingArea || conn.RageRetired
+                    || !conn.PlayerObjectCreated && !conn.PlayerSent) return null;
+                return Lifetap.Presentation(conn);
+            }
+        });
 
     // The client's Life step reads life_recovery_per_minute and cannot know Petrified Blood's Low Life cap. Send 0
     // while the pool is at or above the boundary and the real modelled rate once it is below, so the local prediction
@@ -283,7 +297,8 @@ static partial class Game
         stats.Key("mana_cost") is uint k ? (uint)skills.EffectStats(effect, level, quality).Where(kv => kv.Item1 == k).Select(kv => kv.Item2).FirstOrDefault() : 0;
 
     // A gem skill's mana cost at the gem's level (its mana_cost stat), paid when the cast starts, plus Petrified
-    // Blood's base life cost while it runs and the player is not on Low Life. False when the player lacks either.
+    // Blood's base life cost while it runs and the player is not on Low Life. Lifetap Support replaces the whole
+    // mana cost with Life. False when the player lacks either pool.
     internal static bool PayMana(ClientState conn, ushort skillId, out uint cost, out uint lifeCost)
     {
         var own = SupportedSkill(conn, skillId).Stats;
@@ -295,13 +310,22 @@ static partial class Game
             // Reap's Blood Charges: more cost per charge held (BloodCharges), rounded as the client rounds costs.
             if (cost > 0 && BloodCharges.Uses(Own))
                 cost = (uint)Math.Round(cost * BloodCharges.More(Own(BloodCharges.CostPerCharge), conn.BloodCharges));
-            int life = PetrifiedBlood.LifeCost(conn, (int)Math.Min(cost, int.MaxValue));
+            int life;
+            if (Lifetap.Supported(own))
+            {
+                // Lifetap pays the whole cost as Life. Petrified Blood's share of a Mana cost that no longer exists is
+                // therefore zero: the two conversions do not stack into 140%.
+                life = (int)Math.Min(cost, int.MaxValue);
+                cost = 0;
+            }
+            else life = PetrifiedBlood.LifeCost(conn, (int)Math.Min(cost, int.MaxValue));
             if (conn.PlayerMana < cost || life > 0 && conn.PlayerLife <= (uint)life) return false;
             conn.PlayerMana -= cost;
             if (life > 0)
             {
                 conn.PlayerLife -= (uint)life;
                 lifeCost = (uint)life;
+                Lifetap.Spend(conn, own, life, conn.Clock.Elapsed.TotalSeconds);
             }
             return true;
         }
@@ -490,6 +514,7 @@ static partial class Game
             await SendRecentEnemyHits(remote, stream, ciphers, conn);
             if (conn.FlaskGrounds.StartTickerIfConfigured()) _ = RunFlaskGrounds(remote, stream, ciphers, conn);
             await SendAttackerSlows(remote, stream, ciphers, conn);
+            await SendLifetap(remote, stream, ciphers, conn);
             await TickPassiveAuras(remote, stream, ciphers, conn);
             await PushOutOfCollision(remote, stream, ciphers, conn);
             await BurnIgnited(remote, stream, ciphers, conn);
@@ -1094,6 +1119,8 @@ static partial class Game
                         foreach (var budget in player.Souls ?? [])
                             conn.SentVaalSouls.Add(budget.ActiveSkillsRow, budget);
                         conn.PresentedAuras.Clear();
+                        conn.Lifetap.PresentedBuff = 0;
+                        conn.Lifetap.RefreshPresented = false;
                         conn.AuraStatsDirty = false;
                         conn.PlayerObjectCreated = true;
                         return InstanceEntities.CreateObject(PlayerId, conn.PeerType, player.Blob());
